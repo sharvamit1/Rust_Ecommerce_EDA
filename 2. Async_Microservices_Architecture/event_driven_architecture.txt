@@ -1,0 +1,103 @@
+Asynchronous Event-Driven Architecture (EDA)
+
+===========================================================================
+
+In an Event-Driven setup
+
+1. The Core Shift: The order_service completely stops making direct connections to the payment_service (port 8081 is removed from its code entirely). It no longer waits or cares if the payment service is up, down, fast, or slow.
+
+2. The Shared Broker: We will introduce a lightweight, in-memory Event Broker inside workspace. When an order arrives, the order_service simply publishes an OrderCreated event to this broker and immediately returns a success message to the user.
+
+3. The Consumers: The payment_service shifts from an HTTP/TCP listener to an active event subscriber. It continuously pulls or listens for OrderCreated events from the broker, processes them asynchronously, and publishes a PaymentProcessed event back.
+
+===========================================================================
+
+Set up this architecture
+
+1. libs/event_broker: The multi-producer and multi-consumer broadcast channel using Tokio for services to pass events in memory.
+
+2. Refactored order_service, payment_service: Updating them to pull from and push to the broker instead of dialing raw TCP ports directly.
+
+===========================================================================
+
+---FOR WINDOWS POWERSHELL ---
+
+mkdir libs/event_broker/src
+New-Item libs/event_broker/Cargo.toml -ItemType File
+New-Item libs/event_broker/src/lib.rs -ItemType File
+
+mkdir services/event_broker/src
+New-Item services/event_broker/Cargo.toml -ItemType File
+New-Item services/event_broker/src/main.rs -ItemType File
+
+===========================================================================
+
+::: Run to test :::
+
+Four separate terminal windows
+
+1. Terminal 1 (Event Broker Hub):
+cargo run -p event_broker_service
+
+2. Terminal 2 (Payment Consumer):
+cargo run -p payment_service
+
+3. Terminal 3 (Order Producer & Consumer):
+cargo run -p order_service
+
+4. Terminal 4 (The Client Trigger): Open PowerShell here and run single-line client command to fire off an order request payload:
+
+$client = New-Object System.Net.Sockets.TcpClient("127.0.0.1", 8080); $stream = $client.GetStream(); $payload = '{"item_id": 101, "quantity": 3, "user_id": 19}'; $data = [System.Text.Encoding]::UTF8.GetBytes($payload); $stream.Write($data, 0, $data.Length); $buffer = New-Object Byte[] 1024; $bytesRead = $stream.Read($buffer, 0, $buffer.Length); $response = [System.Text.Encoding]::UTF8.GetString($buffer, 0, $bytesRead); Write-Host "Response from Order Service: $response" -ForegroundColor Green; $stream.Close(); $client.Close()
+
+$client = New-Object System.Net.Sockets.TcpClient("127.0.0.1", 8080); $stream = $client.GetStream(); $payload = '{"item_id": 101, "quantity": 3, "user_id": 999}'; $data = [System.Text.Encoding]::UTF8.GetBytes($payload); $stream.Write($data, 0, $data.Length); $buffer = New-Object Byte[] 1024; $bytesRead = $stream.Read($buffer, 0, $buffer.Length); $response = [System.Text.Encoding]::UTF8.GetString($buffer, 0, $bytesRead); Write-Host "Response from Order Service: $response" -ForegroundColor Green; $stream.Close(); $client.Close()
+
+===========================================================================
+
+::: Scenario payment failed for Order 1004 :::
+
+1. The Ingestion: The order_service took the client request for item #101, quickly returned "Order accepted" to the client, and pushed the OrderCreated event to the broker.
+
+2. The Distribution: The event_broker_service captured that event from the order service and instantly distributed it to all background workers.
+
+3. The Asynchronous Rejection: The payment_service caught the event, saw (user_id: 999), evaluated the failure condition, printed Payment rejected due to insufficient funds, and pushed "payment failed" event back to the broker.
+
+4. The Closed Loop: The event_broker_service broadcasted that payment failure event, and the order_service (which was listening in the background) caught it and printed received event (Payment FAILED for Order #1004)
+
+===========================================================================
+
+mkdir services/shipping_service/src
+New-Item services/shipping_service/Cargo.toml -ItemType File
+New-Item services/shipping_service/src/main.rs -ItemType File
+
+===========================================================================
+
+docker compose up --build -d
+docker compose logs -f
+
+===========================================================================
+
+--- PAYMENT SUCCESS SCENARIO ---
+
+$client = New-Object System.Net.Sockets.TcpClient("127.0.0.1", 8080); $stream = $client.GetStream(); $payload = '{"item_id": 101, "quantity": 3, "user_id": 42}'; $data = [System.Text.Encoding]::UTF8.GetBytes($payload); $stream.Write($data, 0, $data.Length); $buffer = New-Object Byte[] 1024; $bytesRead = $stream.Read($buffer, 0, $buffer.Length); $response = [System.Text.Encoding]::UTF8.GetString($buffer, 0, $bytesRead); Write-Host "Response from Order Service: $response" -ForegroundColor Green; $stream.Close(); $client.Close()
+
+Response from Order Service: Order accepted. Order ID: 1001
+
+===========================================================================
+
+--- PAYMENT FAILED SCENARIO ---
+
+$client = New-Object System.Net.Sockets.TcpClient("127.0.0.1", 8080); $stream = $client.GetStream(); $payload = '{"item_id": 102, "quantity": 1, "user_id": 999}'; $data = [System.Text.Encoding]::UTF8.GetBytes($payload); $stream.Write($data, 0, $data.Length); $buffer = New-Object Byte[] 1024; $bytesRead = $stream.Read($buffer, 0, $buffer.Length); $response = [System.Text.Encoding]::UTF8.GetString($buffer, 0, $bytesRead); Write-Host "Response from Order Service: $response" -ForegroundColor Red; $stream.Close(); $client.Close()
+
+Response from Order Service: Order accepted. Order ID: 1002
+
+===========================================================================
+
+::: Custom Broker vs Kafka Protocol :::
+
+1. The Central Hub (TcpListener) - Instead of using Kafka’s protocol, we used Tokio to open a raw TCP server listening on port 8082. This port became our central message bus. Every microservice (order_service, payment_service, shipping_service) connects to this single port upon startup.
+
+2. The Subscriber Registry (Arc<Mutex<Vec<...>>>) - Inside the event_broker_service code, we created a shared list protected by a thread-safe lock: Arc<Mutex<Vec<OwnedWriteHalf>>>. Whenever a service connects to port 8082, the broker splits the network socket and saves the writing half of that connection into this vector. This vector acts as a registry of active subscribers.
+
+3. The Broadcast (Fan-Out) Mechanism - When the order_service pushes an OrderCreated event into port 8082, the broker catches it. It then runs a for loop over that registry vector, duplicating the JSON bytes and shoving them down every open connection stream. This is how the payment_service and shipping_service receive the event simultaneously without ever talking to the order service or to each other.
+
+===========================================================================

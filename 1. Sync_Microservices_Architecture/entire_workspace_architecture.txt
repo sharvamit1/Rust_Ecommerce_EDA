@@ -1,0 +1,99 @@
+TCP-based Microservices Architecture
+1. the root configuration, 
+2. the shared contract libraries, 
+3. and both independent services (wired up to communicate synchronously via TCP Sockets)
+
+===========================================================================
+
+Testing commands to validate and start the services
+1. first terminal run: cargo check
+2. second terminal run: cargo run -p payment_service
+3. third terminal run: cargo run -p order_service
+4. fourth terminal run: the client script payload to send the JSON data to 127.0.0.1:8080
+
+===========================================================================
+
+Remember: Switch to Powershell
+
+===========================================================================
+
+4.1. Order Success Scenario
+
+$client = New-Object System.Net.Sockets.TcpClient("127.0.0.1", 8080); $stream = $client.GetStream(); $payload = '{"item_id": 101, "quantity": 3, "user_id": 100}'; $data = [System.Text.Encoding]::UTF8.GetBytes($payload); $stream.Write($data, 0, $data.Length); $buffer = New-Object Byte[] 1024; $bytesRead = $stream.Read($buffer, 0, $buffer.Length); $response = [System.Text.Encoding]::UTF8.GetString($buffer, 0, $bytesRead); Write-Host "Response from Order Service: $response" -ForegroundColor Green; $stream.Close(); $client.Close()
+
+How it works
+4.1.1. Order service running on 127.0.0.1:8080
+Processing order for item: 101, quantity: 3
+
+4.1.2. Payment service running on 127.0.0.1:8081
+Received payment request for order: 12345, user: 42
+
+4.1.3. Order service running on 127.0.0.1:8080
+Order successfully completed with Tx: tx_12345
+
+Response from Order Service: Order completed successfully
+
+===========================================================================
+
+4.2. Failed Payment Scenario (User ID: 999)
+
+$client = New-Object System.Net.Sockets.TcpClient("127.0.0.1", 8080); $stream = $client.GetStream(); $payload = '{"item_id": 102, "quantity": 1, "user_id": 999}'; $data = [System.Text.Encoding]::UTF8.GetBytes($payload); $stream.Write($data, 0, $data.Length); $buffer = New-Object Byte[] 1024; $bytesRead = $stream.Read($buffer, 0, $buffer.Length); $response = [System.Text.Encoding]::UTF8.GetString($buffer, 0, $bytesRead); Write-Host "Response from Order Service: $response" -ForegroundColor Red; $stream.Close(); $client.Close()
+
+How it works
+4.2.1. Order service running on 127.0.0.1:8080
+Processing order for item: 102, quantity: 1
+
+4.2.2. Payment service running on 127.0.0.1:8081
+Received payment request for order: 12345, user: 999
+
+4.2.3. Order service running on 127.0.0.1:8080
+Order failed due to payment rejection
+
+Response from Order Service: Order failed: Payment rejected
+
+
+===========================================================================
+
+1. The Client Triggers the Order Service First
+When execute the PowerShell client command, it connects directly to port 8080. Client Order Service (Port 8080). This is why Order Service console prints out: “Processing order for item: 101...” before anything else happens anywhere else.
+
+2. The Order Service Calls the Payment Service
+Inside the Order Service code, once it reads  request, it acts like a client itself. It opens a new network connection downstream to port 8081 to talk to the Payment Service. Payment Service (Port 8081). Now, the Payment Service wakes up and prints: “Received payment request...”
+
+3. The Payment Service Evaluates and Responds Back to the Order Service
+Whether the payment is a success (User 42) or a failure (User 999), the Payment Service packages that result into a JSON contract and sends it backwards over the network wire directly to the Order Service.
+
+4. The Order Service Delivers the Final Answer to the Client
+The Order Service catches that response from the Payment Service. It evaluates the result, prints its final log (“Order successfully completed...” or “Order failed due to payment rejection”), and then sends the final plain text message back out to client terminal window.
+
+===========================================================================
+
+::: TCP microservices chain suddenly hangs or freezes :::
+
+When a synchronous TCP microservices chain suddenly hangs or freezes without returning any response, it is almost always caused by a TCP socket deadlock (blocking I/O bottleneck).
+
+Because we wrote this setup using raw, low-level TCP streams (TcpStream) rather than a higher-level framework like HTTP (e.g., Axum), the services are waiting indefinitely for an End-Of-File (EOF) signal or a buffer break that never arrives.
+
+Here is exactly where the code is getting stuck and how to resolve it:
+
+The Root Cause of the Freeze
+
+Look closely at how the order_service talks to the payment_service:
+
+1. The order_service successfully connects to the payment_service on port 8081.
+
+2. It writes the data into the network stream using payment_stream.write_all(&serialized_payment).await.
+
+3. Right after writing, the order_service immediately shifts to reading using payment_stream.read(&mut payment_buffer).await.
+
+4. The Deadlock: The payment_service loop on port 8081 keeps reading from its buffer until the client connection closes or sends an explicit signal that it is finished writing. Because the order_service keeps its connection wide open (waiting to read the reply), the payment_service stays stuck in its read loop, expecting more bytes. Both services end up waiting for each other forever.
+
+===========================================================================
+
+::: How to Fix It :::
+
+To break the network deadlock, we need to explicitly tell the receiving service that we are done sending request so it can safely stop reading and process the data.
+
+We can do this cleanly by updating services/order_service/src/main.rs to use Tokio's shutdown() method right after sending its request. This acts like sending a "Half-Close" signal—it tells the payment service "I am done sending my data, but I am keeping the line open to hear response."
+
+It will now instantly process the data, break the loops gracefully, and return the confirmation payload to client window without hanging!

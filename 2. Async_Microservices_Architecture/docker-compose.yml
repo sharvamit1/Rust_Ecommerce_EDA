@@ -1,0 +1,46 @@
+version: "3.8"
+
+services:
+  event_broker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: broker_runtime
+    container_name: event_broker_node
+    ports:
+      - "8082:8082"
+      - "8080:8080"
+    restart: unless-stopped
+
+  payment_service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: payment_runtime
+    container_name: payment_service_node
+    network_mode: "service:event_broker"
+    depends_on:
+      - event_broker
+    restart: unless-stopped
+
+  order_service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: order_runtime
+    container_name: order_service_node
+    network_mode: "service:event_broker"
+    depends_on:
+      - event_broker
+    restart: unless-stopped
+
+  shipping_service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: shipping_runtime
+    container_name: shipping_service_node
+    network_mode: "service:event_broker"
+    depends_on:
+      - event_broker
+    restart: unless-stopped

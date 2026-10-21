@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "services/order_service",
+    "services/payment_service",
+    "libs/shared_models"
+]
+resolver = "2"

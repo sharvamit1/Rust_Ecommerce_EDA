@@ -1,0 +1,30 @@
+#ramramjiramramjuramramji
+#ramramjiramramjuramramji
+#ramramjiramramjuramramji
+#ramramjiramramjuramramji
+#ramramjiramramjuramramji
+#ramramjiramramjuramramji
+#ramramjiramramjuramramji
+#ramramjiramramjuramramji
+#ramramjiramramjuramramji
+#ramramjiramramjuramramji
+[workspace]
+members = [
+    "services/order_service",
+    "services/payment_service",
+    "services/event_broker",
+    "services/shipping_service",
+    "libs/shared_models",
+    "libs/event_broker",
+]
+resolver = "2"
+#ramramjiramramjuramramji
+#ramramjiramramjuramramji
+#ramramjiramramjuramramji
+#ramramjiramramjuramramji
+#ramramjiramramjuramramji
+#ramramjiramramjuramramji
+#ramramjiramramjuramramji
+#ramramjiramramjuramramji
+#ramramjiramramjuramramji
+#ramramjiramramjuramramji

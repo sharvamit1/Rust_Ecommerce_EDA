@@ -1,0 +1,15 @@
+mkdir PaymentOrderRequestResponseMicroservices
+cd PaymentOrderRequestResponseMicroservices
+New-Item Cargo.toml -ItemType File
+
+mkdir services/order_service/src
+New-Item services/order_service/Cargo.toml -ItemType File
+New-Item services/order_service/src/main.rs -ItemType File
+
+mkdir services/payment_service/src
+New-Item services/payment_service/Cargo.toml -ItemType File
+New-Item services/payment_service/src/main.rs -ItemType File
+
+mkdir libs/shared_models/src
+New-Item libs/shared_models/Cargo.toml -ItemType File
+New-Item libs/shared_models/src/lib.rs -ItemType File
